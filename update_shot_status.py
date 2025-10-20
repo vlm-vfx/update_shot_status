@@ -2,6 +2,8 @@ from shotgun_api3 import Shotgun
 from flask import Flask, request, jsonify
 import os
 import requests
+import json
+from urllib.parse import quote
 from base64 import b64encode
 
 app = Flask(__name__)
@@ -29,6 +31,7 @@ STATUS_MAP = {
     "omt": "OMIT"
 }
 
+# --- FMP AUTH ---
 def fmp_login():
     """Authenticate and return FMP session token"""
     url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/sessions"
@@ -44,39 +47,27 @@ def fmp_login():
     else:
         raise Exception(f"FMP Login failed: {r.text}")
 
+# --- FMP SCRIPT CALL ---
 def fmp_update_status(token, sg_id, fmp_status):
-    """Update a record in FMP where SG_ID matches"""
-    url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/layouts/{quote(ID List)}//_find"
+    """Call a FileMaker script to update the Shot record"""
+    script_name = "SG_update_status"  # <-- Name of your FM script
+    url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/scripts/{quote(script_name)}"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}",
     }
-    # Find record by SG_ID
-    query = {"query": [{"SG_ID": str(sg_id)}]}
-    find_response = requests.post(url, headers=headers, json=query)
-    if find_response.status_code != 200:
-        print(f"FMP find failed for SG_ID {sg_id}: {find_response.text}")
-        return False
-    
-    data = find_response.json().get("response", {}).get("data", [])
-    if not data:
-        print(f"No matching record found for SG_ID {sg_id}")
-        return False
-    
-    record_id = data[0]["recordId"]
-    
-    # Update status field
-    update_url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/layouts/{quote(ID List)}/records/{record_id}"
-    update_data = {"fieldData": {"Status": fmp_status}}
-    update_response = requests.patch(update_url, headers=headers, json=update_data)
-    
-    if update_response.status_code == 200:
-        print(f"✅ Updated SG_ID {sg_id} → {fmp_status}")
+    param = json.dumps({"SG_ID": sg_id, "Status": fmp_status})
+    payload = {"script.param": param}
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code == 200:
+        print(f"✅ Script called for SG_ID {sg_id}: {response.json()}")
         return True
     else:
-        print(f"❌ Failed to update SG_ID {sg_id}: {update_response.text}")
+        print(f"❌ Failed to call script for SG_ID {sg_id}: {response.text}")
         return False
 
+
+# --- FLASK ROUTE ---
 @app.route("/update_shot_status", methods=["GET", "POST"])
 def update_shot_status():
     data = {}
@@ -103,11 +94,13 @@ def update_shot_status():
         if not shot or not isinstance(shot, dict):
             print(f"Skipping version {v['id']} (no linked Shot)")
             skipped += 1
+            log.append({"version_id": v["id"], "note": "No linked Shot"})
             continue
         
         shot_data = sg.find_one("Shot", [["id", "is", shot["id"]]], ["id", "sg_status_list"])
         if not shot_data:
             skipped += 1
+            log.append({"version_id": v["id"], "note": f"Shot {shot['id']} not found"})
             continue
 
         sg_id = shot_data["id"]
@@ -122,12 +115,23 @@ def update_shot_status():
         success = fmp_update_status(fmp_token, sg_id, fmp_status)
         if success:
             updated += 1
+        else:
+            skipped += 1
+            log.append({"shot_id": sg_id, "note": "FMP script failed"})
 
-    return jsonify({
+    # --- Return JSON ---
+    result = {
         "message": f"✅ Updated {updated} shots in FileMaker. Skipped {skipped}.",
         "updated": updated,
         "skipped": skipped,
-    })
+ 
+    }
 
+    if debug:
+        result["debug_log"] = log
+
+    return jsonify(result)
+
+# --- RUN APP ---
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
