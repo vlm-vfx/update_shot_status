@@ -117,6 +117,13 @@ def update_shot_status():
         sg_status = shot_data.get("sg_status_list")
         fmp_status = STATUS_MAP.get(sg_status, "Unknown")
 
+        log.append({
+            "version_id": v["id"],
+            "shot_id": sg_id,
+            "shot_status": sg_status,
+            "mapped_status": fmp_status
+        })
+        
         if fmp_status == "Unknown":
             print(f"Skipping SG_ID {sg_id} with unmapped status {sg_status}")
             skipped += 1
@@ -125,17 +132,20 @@ def update_shot_status():
         success = fmp_update_status(fmp_token, sg_id, fmp_status)
         if success:
             updated += 1
+        else:
+            skipped += 1
+            log.append({"shot_id": sg_id, "note": "FMP update failed"})
 
-    return jsonify({
+    result = {
         "message": f"✅ Updated {updated} shots in FileMaker. Skipped {skipped}.",
         "updated": updated,
         "skipped": skipped,
     }
+    
     if debug:
         result["debug_log"] = log
 
     return jsonify(result)
-    )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
