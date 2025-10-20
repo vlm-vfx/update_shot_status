@@ -49,8 +49,8 @@ def fmp_login():
 
 # --- FMP SCRIPT CALL ---
 def fmp_update_status(token, sg_id, fmp_status):
-    """Call a FileMaker script to update the Shot record"""
-    script_name = "SG_update_status"  # <-- Name of your FM script
+    """Call a FileMaker script to update the Shot record safely"""
+    script_name = "SG_update_status"  # Your FM script name
     url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/scripts/{quote(script_name)}"
     headers = {
         "Content-Type": "application/json",
@@ -58,18 +58,25 @@ def fmp_update_status(token, sg_id, fmp_status):
     }
     param = json.dumps({"SG_ID": sg_id, "Status": fmp_status})
     payload = {"script.param": param}
-    response = requests.post(url, headers=headers, json=payload)
-    if response.status_code == 200:
-        print(f"✅ Script called for SG_ID {sg_id}: {response.json()}")
-        return True
-    else:
-        print(f"❌ Failed to call script for SG_ID {sg_id}: {response.text}")
-        return False
-
+    
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        result_json = response.json()
+        # Check for FileMaker error codes
+        if "messages" in result_json and any(m.get("code") != "0" for m in result_json["messages"]):
+            print(f"❌ FMP script error for SG_ID {sg_id}: {result_json}")
+            return False, result_json
+        print(f"✅ FMP script success for SG_ID {sg_id}: {result_json}")
+        return True, result_json
+    except Exception as e:
+        print(f"❌ Exception calling FMP script for SG_ID {sg_id}: {e}")
+        return False, {"error": str(e)}
 
 # --- FLASK ROUTE ---
 @app.route("/update_shot_status", methods=["GET", "POST"])
 def update_shot_status():
+    # Merge GET, POST, JSON
     data = {}
     data.update(request.args)
     data.update(request.form)
@@ -78,25 +85,32 @@ def update_shot_status():
 
     selected_ids = data.get("selected_ids", "")
     ids = [int(x) for x in selected_ids.split(",") if x.strip().isdigit()]
+    
+    debug = data.get("debug", "false").lower() == "true"
+    log = []
 
     if not ids:
         return "No valid Version IDs received from SG.", 400
 
     # --- Get Versions + linked Shots ---
-    versions = sg.find("Version", [["id", "in", ids]], ["id", "code", "entity.Shot.code", "entity.Shot.id", "entity.Shot.sg_status_list"])
+    versions = sg.find(
+        "Version",
+        [["id", "in", ids]],
+        ["id", "code", "entity.Shot.code", "entity.Shot.id", "entity.Shot.sg_status_list"]
+    )
     
     fmp_token = fmp_login()
     updated = 0
     skipped = 0
-    
+
     for v in versions:
         shot = v.get("entity")
         if not shot or not isinstance(shot, dict):
-            print(f"Skipping version {v['id']} (no linked Shot)")
             skipped += 1
             log.append({"version_id": v["id"], "note": "No linked Shot"})
             continue
         
+        # Fetch Shot status
         shot_data = sg.find_one("Shot", [["id", "is", shot["id"]]], ["id", "sg_status_list"])
         if not shot_data:
             skipped += 1
@@ -107,24 +121,38 @@ def update_shot_status():
         sg_status = shot_data.get("sg_status_list")
         fmp_status = STATUS_MAP.get(sg_status, "Unknown")
 
+        log_entry = {
+            "version_id": v["id"],
+            "shot_id": sg_id,
+            "shot_status": sg_status,
+            "mapped_status": fmp_status
+        }
+        
         if fmp_status == "Unknown":
-            print(f"Skipping SG_ID {sg_id} with unmapped status {sg_status}")
             skipped += 1
+            log_entry["note"] = f"Unmapped status {sg_status}"
+            log.append(log_entry)
             continue
 
-        success = fmp_update_status(fmp_token, sg_id, fmp_status)
-        if success:
-            updated += 1
-        else:
+        try:
+            success, fmp_result = fmp_update_status(fmp_token, sg_id, fmp_status)
+            if success:
+                updated += 1
+            else:
+                skipped += 1
+                log_entry["note"] = "FMP script failed"
+                log_entry["fmp_result"] = fmp_result
+        except Exception as e:
             skipped += 1
-            log.append({"shot_id": sg_id, "note": "FMP script failed"})
+            log_entry["note"] = f"Exception during FMP call: {e}"
+        
+        log.append(log_entry)
 
     # --- Return JSON ---
     result = {
         "message": f"✅ Updated {updated} shots in FileMaker. Skipped {skipped}.",
         "updated": updated,
         "skipped": skipped,
- 
     }
 
     if debug:
