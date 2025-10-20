@@ -46,7 +46,7 @@ def fmp_login():
 
 def fmp_update_status(token, sg_id, fmp_status):
     """Update a record in FMP where SG_ID matches"""
-    url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/layouts/VFX/_find"
+    url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/layouts/{quote(ID List)}//_find"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}",
@@ -66,7 +66,7 @@ def fmp_update_status(token, sg_id, fmp_status):
     record_id = data[0]["recordId"]
     
     # Update status field
-    update_url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/layouts/VFX/records/{record_id}"
+    update_url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/layouts/{quote(ID List)}/records/{record_id}"
     update_data = {"fieldData": {"Status": fmp_status}}
     update_response = requests.patch(update_url, headers=headers, json=update_data)
     
