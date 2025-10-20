@@ -1,0 +1,133 @@
+from shotgun_api3 import Shotgun
+from flask import Flask, request, jsonify
+import os
+import requests
+from base64 import b64encode
+
+app = Flask(__name__)
+
+# --- CONFIG ---
+SG_URL = os.environ.get("SG_URL")
+SG_SCRIPT_NAME = os.environ.get("SG_SCRIPT_NAME")
+SG_API_KEY = os.environ.get("SG_API_KEY")
+
+FMP_SERVER = os.environ.get("FMP_SERVER")
+FMP_DB = os.environ.get("FMP_DB")
+FMP_USERNAME = os.environ.get("FMP_USERNAME")
+FMP_PASSWORD = os.environ.get("FMP_PASSWORD")
+
+# --- CONNECT TO SHOTGRID ---
+sg = Shotgun(SG_URL, script_name=SG_SCRIPT_NAME, api_key=SG_API_KEY)
+
+# --- STATUS MAP (SG → FMP) ---
+STATUS_MAP = {
+    "wtg": "NEW",
+    "ip": "IN PROGRESS",
+    "hld": "ON HOLD",
+    "profi": "NEED POST APPROVAL",
+    "apr": "APPROVED",
+    "omt": "OMIT"
+}
+
+def fmp_login():
+    """Authenticate and return FMP session token"""
+    url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/sessions"
+    auth_string = f"{FMP_USERNAME}:{FMP_PASSWORD}"
+    auth_base64 = b64encode(auth_string.encode("utf-8")).decode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Basic {auth_base64}",
+    }
+    r = requests.post(url, headers=headers)
+    if r.status_code == 200:
+        return r.json()["response"]["token"]
+    else:
+        raise Exception(f"FMP Login failed: {r.text}")
+
+def fmp_update_status(token, sg_id, fmp_status):
+    """Update a record in FMP where SG_ID matches"""
+    url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/layouts/VFX/_find"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+    }
+    # Find record by SG_ID
+    query = {"query": [{"SG_ID": str(sg_id)}]}
+    find_response = requests.post(url, headers=headers, json=query)
+    if find_response.status_code != 200:
+        print(f"FMP find failed for SG_ID {sg_id}: {find_response.text}")
+        return False
+    
+    data = find_response.json().get("response", {}).get("data", [])
+    if not data:
+        print(f"No matching record found for SG_ID {sg_id}")
+        return False
+    
+    record_id = data[0]["recordId"]
+    
+    # Update status field
+    update_url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/layouts/API_Shots/records/{record_id}"
+    update_data = {"fieldData": {"Status": fmp_status}}
+    update_response = requests.patch(update_url, headers=headers, json=update_data)
+    
+    if update_response.status_code == 200:
+        print(f"✅ Updated SG_ID {sg_id} → {fmp_status}")
+        return True
+    else:
+        print(f"❌ Failed to update SG_ID {sg_id}: {update_response.text}")
+        return False
+
+@app.route("/update_fmp_status", methods=["GET", "POST"])
+def update_fmp_status():
+    data = {}
+    data.update(request.args)
+    data.update(request.form)
+    if request.is_json:
+        data.update(request.get_json())
+
+    selected_ids = data.get("selected_ids", "")
+    ids = [int(x) for x in selected_ids.split(",") if x.strip().isdigit()]
+
+    if not ids:
+        return "No valid Version IDs received from SG.", 400
+
+    # --- Get Versions + linked Shots ---
+    versions = sg.find("Version", [["id", "in", ids]], ["id", "code", "entity.Shot.code", "entity.Shot.id", "entity.Shot.sg_status_list"])
+    
+    fmp_token = fmp_login()
+    updated = 0
+    skipped = 0
+    
+    for v in versions:
+        shot = v.get("entity")
+        if not shot or not isinstance(shot, dict):
+            print(f"Skipping version {v['id']} (no linked Shot)")
+            skipped += 1
+            continue
+        
+        shot_data = sg.find_one("Shot", [["id", "is", shot["id"]]], ["id", "sg_status_list"])
+        if not shot_data:
+            skipped += 1
+            continue
+
+        sg_id = shot_data["id"]
+        sg_status = shot_data.get("sg_status_list")
+        fmp_status = STATUS_MAP.get(sg_status, "Unknown")
+
+        if fmp_status == "Unknown":
+            print(f"Skipping SG_ID {sg_id} with unmapped status {sg_status}")
+            skipped += 1
+            continue
+
+        success = fmp_update_status(fmp_token, sg_id, fmp_status)
+        if success:
+            updated += 1
+
+    return jsonify({
+        "message": f"✅ Updated {updated} shots in FileMaker. Skipped {skipped}.",
+        "updated": updated,
+        "skipped": skipped,
+    })
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5001)
