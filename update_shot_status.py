@@ -33,7 +33,6 @@ STATUS_MAP = {
 
 # --- FMP AUTH ---
 def fmp_login():
-    """Authenticate and return FMP session token"""
     url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/sessions"
     auth_string = f"{FMP_USERNAME}:{FMP_PASSWORD}"
     auth_base64 = b64encode(auth_string.encode("utf-8")).decode("utf-8")
@@ -49,8 +48,7 @@ def fmp_login():
 
 # --- FMP SCRIPT CALL ---
 def fmp_update_status(token, sg_id, fmp_status):
-    """Call a FileMaker script to update the Shot record safely"""
-    script_name = "SG_update_status"  # Your FM script name
+    script_name = "Update Shot Status"
     url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/scripts/{quote(script_name)}"
     headers = {
         "Content-Type": "application/json",
@@ -58,12 +56,10 @@ def fmp_update_status(token, sg_id, fmp_status):
     }
     param = json.dumps({"SG_ID": sg_id, "Status": fmp_status})
     payload = {"script.param": param}
-    
     try:
         response = requests.post(url, headers=headers, json=payload)
         response.raise_for_status()
         result_json = response.json()
-        # Check for FileMaker error codes
         if "messages" in result_json and any(m.get("code") != "0" for m in result_json["messages"]):
             print(f"❌ FMP script error for SG_ID {sg_id}: {result_json}")
             return False, result_json
@@ -96,7 +92,7 @@ def update_shot_status():
     versions = sg.find(
         "Version",
         [["id", "in", ids]],
-        ["id", "code", "entity.Shot.code", "entity.Shot.id", "entity.Shot.sg_status_list"]
+        ["id", "code", "entity.Shot.id", "entity.Shot.sg_status_list"]
     )
     
     fmp_token = fmp_login()
@@ -104,38 +100,32 @@ def update_shot_status():
     skipped = 0
 
     for v in versions:
-        shot = v.get("entity")
-        if not shot or not isinstance(shot, dict):
-            skipped += 1
-            log.append({"version_id": v["id"], "note": "No linked Shot"})
-            continue
-        
-        # Fetch Shot status
-        shot_data = sg.find_one("Shot", [["id", "is", shot["id"]]], ["id", "sg_status_list"])
-        if not shot_data:
-            skipped += 1
-            log.append({"version_id": v["id"], "note": f"Shot {shot['id']} not found"})
-            continue
-
-        sg_id = shot_data["id"]
-        sg_status = shot_data.get("sg_status_list")
-        fmp_status = STATUS_MAP.get(sg_status, "Unknown")
+        shot_id = v.get("entity.Shot.id")
+        shot_status = v.get("entity.Shot.sg_status_list")
 
         log_entry = {
             "version_id": v["id"],
-            "shot_id": sg_id,
-            "shot_status": sg_status,
-            "mapped_status": fmp_status
+            "shot_id": shot_id,
+            "shot_status": shot_status,
         }
-        
+
+        if not shot_id:
+            skipped += 1
+            log_entry["note"] = "No linked Shot"
+            log.append(log_entry)
+            continue
+
+        fmp_status = STATUS_MAP.get(shot_status, "Unknown")
+        log_entry["mapped_status"] = fmp_status
+
         if fmp_status == "Unknown":
             skipped += 1
-            log_entry["note"] = f"Unmapped status {sg_status}"
+            log_entry["note"] = f"Unmapped status {shot_status}"
             log.append(log_entry)
             continue
 
         try:
-            success, fmp_result = fmp_update_status(fmp_token, sg_id, fmp_status)
+            success, fmp_result = fmp_update_status(fmp_token, shot_id, fmp_status)
             if success:
                 updated += 1
             else:
@@ -145,7 +135,7 @@ def update_shot_status():
         except Exception as e:
             skipped += 1
             log_entry["note"] = f"Exception during FMP call: {e}"
-        
+
         log.append(log_entry)
 
     # --- Return JSON ---
