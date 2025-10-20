@@ -77,8 +77,8 @@ def fmp_update_status(token, sg_id, fmp_status):
         print(f"❌ Failed to update SG_ID {sg_id}: {update_response.text}")
         return False
 
-@app.route("/update_fmp_status", methods=["GET", "POST"])
-def update_fmp_status():
+@app.route("/update_shot_status", methods=["GET", "POST"])
+def update_shot_status():
     data = {}
     data.update(request.args)
     data.update(request.form)
