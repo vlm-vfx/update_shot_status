@@ -48,7 +48,7 @@ def fmp_login():
 
 # --- FMP SCRIPT CALL ---
 def fmp_update_status(token, sg_id, fmp_status):
-    script_name = "Update Shot Status"
+    script_name = "SG_update_status"
     url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/scripts/{quote(script_name)}"
     headers = {
         "Content-Type": "application/json",
