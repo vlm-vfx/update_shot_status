@@ -87,7 +87,10 @@ def update_shot_status():
 
     selected_ids = data.get("selected_ids", "")
     ids = [int(x) for x in selected_ids.split(",") if x.strip().isdigit()]
-
+    
+    debug = data.get("debug", "false").lower() == "true"
+    log = []  # Collect debug info to show in JSON
+    
     if not ids:
         return "No valid Version IDs received from SG.", 400
 
@@ -127,7 +130,12 @@ def update_shot_status():
         "message": f"✅ Updated {updated} shots in FileMaker. Skipped {skipped}.",
         "updated": updated,
         "skipped": skipped,
-    })
+    }
+    if debug:
+        result["debug_log"] = log
+
+    return jsonify(result)
+    )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
