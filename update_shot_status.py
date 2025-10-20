@@ -66,7 +66,7 @@ def fmp_update_status(token, sg_id, fmp_status):
     record_id = data[0]["recordId"]
     
     # Update status field
-    update_url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/layouts/API_Shots/records/{record_id}"
+    update_url = f"{FMP_SERVER}/fmi/data/v2/databases/{FMP_DB}/layouts/VFX/records/{record_id}"
     update_data = {"fieldData": {"Status": fmp_status}}
     update_response = requests.patch(update_url, headers=headers, json=update_data)
     
@@ -87,10 +87,7 @@ def update_shot_status():
 
     selected_ids = data.get("selected_ids", "")
     ids = [int(x) for x in selected_ids.split(",") if x.strip().isdigit()]
-    
-    debug = data.get("debug", "false").lower() == "true"
-    log = []  # Collect debug info to show in JSON
-    
+
     if not ids:
         return "No valid Version IDs received from SG.", 400
 
@@ -117,13 +114,6 @@ def update_shot_status():
         sg_status = shot_data.get("sg_status_list")
         fmp_status = STATUS_MAP.get(sg_status, "Unknown")
 
-        log.append({
-            "version_id": v["id"],
-            "shot_id": sg_id,
-            "shot_status": sg_status,
-            "mapped_status": fmp_status
-        })
-        
         if fmp_status == "Unknown":
             print(f"Skipping SG_ID {sg_id} with unmapped status {sg_status}")
             skipped += 1
@@ -132,20 +122,12 @@ def update_shot_status():
         success = fmp_update_status(fmp_token, sg_id, fmp_status)
         if success:
             updated += 1
-        else:
-            skipped += 1
-            log.append({"shot_id": sg_id, "note": "FMP update failed"})
 
-    result = {
+    return jsonify({
         "message": f"✅ Updated {updated} shots in FileMaker. Skipped {skipped}.",
         "updated": updated,
         "skipped": skipped,
-    }
-    
-    if debug:
-        result["debug_log"] = log
-
-    return jsonify(result)
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
