@@ -55,7 +55,7 @@ def fmp_update_status(token, sg_id, fmp_status):
     }
 
     query = {"query": [{"SG_ID": str(sg_id)}]}
-    print(f"🔍 Querying FMP for SG_ID={sg_id}")
+    print(f" Querying FMP for SG_ID={sg_id}")
     print(f"   → POST {url}")
     print(f"   → BODY: {json.dumps(query)}")
 
@@ -75,10 +75,10 @@ def fmp_update_status(token, sg_id, fmp_status):
     update_response = requests.patch(update_url, headers=headers, json=update_data)
     
     if update_response.status_code == 200:
-        print(f"✅ Updated SG_ID {sg_id} → {fmp_status}")
+        print(f" Updated SG_ID {sg_id} → {fmp_status}")
         return True
     else:
-        print(f"❌ Failed to update SG_ID {sg_id}: {update_response.text}")
+        print(f" Failed to update SG_ID {sg_id}: {update_response.text}")
         return False
 
 @app.route("/update_shot_status", methods=["GET", "POST"])
@@ -110,15 +110,20 @@ def update_fmp_status():
     skipped = 0
     
     for v in versions:
-        shot = v.get("entity")
-        if not shot or not isinstance(shot, dict):
-            print(f"Skipping version {v['id']} (no linked Shot)")
+        entity = v.get("entity")
+
+        if not entity or entity.get("type") != "Shot":
+            print(f"⚠ Skipping version {v['id']} (no linked Shot or entity type = {entity.get('type') if entity else 'None'})")
             skipped += 1
             continue
 
+        shot = entity
+
         # For clarity, print what we got from SG
         if DEBUG:
-            print(f"\n🔎 Version {v['code']} → Linked Shot: {shot}")
+            print(f"\n Version {v['code']} → Linked Shot: {shot}")
+        if DEBUG:
+            print(f" Linked shot: {shot}")
         
         shot_data = sg.find_one("Shot", [["id", "is", shot["id"]]], ["id", "sg_status_list"])
         if not shot_data:
