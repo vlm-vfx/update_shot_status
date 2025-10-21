@@ -103,11 +103,7 @@ def update_fmp_status():
     print(f"   → Debug mode: {DEBUG}")
 
     # --- Get Versions + linked Shots ---
-    versions = sg.find(
-    "Version",
-    [["id", "in", ids]],
-    ["id", "code", "entity", "entity.Shot.code", "entity.Shot.id", "entity.Shot.sg_status_list"]
-    )
+    versions = sg.find("Version", [["id", "in", ids]], ["id", "code", "entity", "entity.Shot.code", "entity.Shot.id", "entity.Shot.sg_status_list"])
     
     fmp_token = fmp_login()
     updated = 0
