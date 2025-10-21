@@ -53,17 +53,19 @@ def fmp_update_status(token, sg_id, fmp_status):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}",
     }
-    # Find record by SG_ID
+
     query = {"query": [{"SG_ID": str(sg_id)}]}
+    print(f"🔍 Querying FMP for SG_ID={sg_id}")
+    print(f"   → POST {url}")
+    print(f"   → BODY: {json.dumps(query)}")
+
     find_response = requests.post(url, headers=headers, json=query)
+    print(f"   ← RESPONSE {find_response.status_code}: {find_response.text}")
+
     if find_response.status_code != 200:
         print(f"FMP find failed for SG_ID {sg_id}: {find_response.text}")
         return False
-    
-    data = find_response.json().get("response", {}).get("data", [])
-    if not data:
-        print(f"No matching record found for SG_ID {sg_id}")
-        return False
+
     
     record_id = data[0]["recordId"]
     
@@ -87,11 +89,18 @@ def update_fmp_status():
     if request.is_json:
         data.update(request.get_json())
 
+    # --- Enable debug mode via URL param ---
+    DEBUG = str(data.get("debug", "false")).lower() in ("1", "true", "yes")
+
     selected_ids = data.get("selected_ids", "")
     ids = [int(x) for x in selected_ids.split(",") if x.strip().isdigit()]
 
     if not ids:
         return "No valid Version IDs received from SG.", 400
+
+    print(f"\n Received AMI Request")
+    print(f"   → Version IDs: {ids}")
+    print(f"   → Debug mode: {DEBUG}")
 
     # --- Get Versions + linked Shots ---
     versions = sg.find("Version", [["id", "in", ids]], ["id", "code", "entity.Shot.code", "entity.Shot.id", "entity.Shot.sg_status_list"])
@@ -106,6 +115,10 @@ def update_fmp_status():
             print(f"Skipping version {v['id']} (no linked Shot)")
             skipped += 1
             continue
+
+        # For clarity, print what we got from SG
+        if DEBUG:
+            print(f"\n🔎 Version {v['code']} → Linked Shot: {shot}")
         
         shot_data = sg.find_one("Shot", [["id", "is", shot["id"]]], ["id", "sg_status_list"])
         if not shot_data:
@@ -116,6 +129,11 @@ def update_fmp_status():
         sg_status = shot_data.get("sg_status_list")
         fmp_status = STATUS_MAP.get(sg_status, "Unknown")
 
+        if DEBUG:
+            print(f"   SG Shot ID: {sg_id}")
+            print(f"   SG Status: {sg_status}")
+            print(f"   FMP Status: {fmp_status}")
+
         if fmp_status == "Unknown":
             print(f"Skipping SG_ID {sg_id} with unmapped status {sg_status}")
             skipped += 1
@@ -125,8 +143,10 @@ def update_fmp_status():
         if success:
             updated += 1
 
+    print(f"\n Finished updating — {updated} updated, {skipped} skipped.")
+
     return jsonify({
-        "message": f"✅ Updated {updated} shots in FileMaker. Skipped {skipped}.",
+        "message": f" Updated {updated} shots in FileMaker. Skipped {skipped}.",
         "updated": updated,
         "skipped": skipped,
     })
