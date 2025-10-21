@@ -66,19 +66,29 @@ def fmp_update_status(token, sg_id, fmp_status):
         print(f"FMP find failed for SG_ID {sg_id}: {find_response.text}")
         return False
 
+    response_json = find_response.json()
+    data = response_json.get("response", {}).get("data", [])
+    if not data:
+        print(f"⚠No matching record found for SG_ID {sg_id}")
+        return False
     
     record_id = data[0]["recordId"]
+    print(f"Found record_id={record_id} for SG_ID={sg_id}")
     
     # Update status field
     update_url = f"{FMP_SERVER}/fmi/data/vLatest/databases/{FMP_DB}/layouts/status_update/records/{record_id}"
     update_data = {"fieldData": {"Status": fmp_status}}
     update_response = requests.patch(update_url, headers=headers, json=update_data)
-    
+
+    print(f"   → PATCH {update_url}")
+    print(f"   → BODY: {json.dumps(update_data)}")
+    print(f"   ← RESPONSE {update_response.status_code}: {update_response.text}")
+
     if update_response.status_code == 200:
-        print(f" Updated SG_ID {sg_id} → {fmp_status}")
+        print(f"Updated SG_ID {sg_id} → {fmp_status}")
         return True
     else:
-        print(f" Failed to update SG_ID {sg_id}: {update_response.text}")
+        print(f"Failed to update SG_ID {sg_id}: {update_response.text}")
         return False
 
 @app.route("/update_shot_status", methods=["GET", "POST"])
